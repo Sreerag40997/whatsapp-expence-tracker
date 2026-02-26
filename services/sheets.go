@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"log"
 	"os"
 	"time"
 
@@ -9,27 +10,22 @@ import (
 	"google.golang.org/api/sheets/v4"
 )
 
-func AppendRow(text string) error {
+func AppendExpenseToSheet(note string, amount float64) {
+	sheetID := os.Getenv("GOOGLE_SHEET_ID")
 	ctx := context.Background()
 
-	credFile := os.Getenv("GOOGLE_CREDENTIALS_JSON")
-	sheetID := os.Getenv("SHEET_ID")
-
-	srv, err := sheets.NewService(ctx, option.WithCredentialsFile(credFile))
+	srv, err := sheets.NewService(ctx, option.WithCredentialsFile("credentials.json"))
 	if err != nil {
-		return err
+		log.Println("Sheet Error:", err)
+		return
 	}
 
-	date := time.Now().Format("02-01-2006 15:04")
-	values := [][]interface{}{
-		{date, text},
+	values := [][]interface{}{{time.Now().Format("2006-01-02 15:04"), note, amount}}
+	rb := &sheets.ValueRange{Values: values}
+
+	_, err = srv.Spreadsheets.Values.Append(sheetID, "Sheet1!A:C", rb).
+		ValueInputOption("RAW").Do()
+	if err != nil {
+		log.Println("Append Error:", err)
 	}
-
-	_, err = srv.Spreadsheets.Values.Append(
-		sheetID,
-		"Sheet1!A:B",
-		&sheets.ValueRange{Values: values},
-	).ValueInputOption("RAW").Do()
-
-	return err
 }

@@ -12,12 +12,9 @@ import (
 )
 
 func VerifyWebhook(c *gin.Context) {
-	mode := c.Query("hub.mode")
-	token := c.Query("hub.verify_token")
-	challenge := c.Query("hub.challenge")
-
-	if mode == "subscribe" && token == "mytoken" {
-		c.String(200, challenge)
+	verifyToken := os.Getenv("VERIFY_TOKEN")
+	if c.Query("hub.mode") == "subscribe" && c.Query("hub.verify_token") == verifyToken {
+		c.String(200, c.Query("hub.challenge"))
 		return
 	}
 	c.Status(403)
@@ -25,138 +22,118 @@ func VerifyWebhook(c *gin.Context) {
 
 func ReceiveMessage(c *gin.Context) {
 	var body map[string]interface{}
-
 	if err := json.NewDecoder(c.Request.Body).Decode(&body); err != nil {
 		c.Status(200)
 		return
 	}
 
-	entryArr, ok := body["entry"].([]interface{})
-	if !ok || len(entryArr) == 0 {
+	// Parse WhatsApp JSON structure
+	entry, ok := body["entry"].([]interface{})
+	if !ok || len(entry) == 0 {
+		c.Status(200)
+		return
+	}
+	changes := entry[0].(map[string]interface{})["changes"].([]interface{})
+	value := changes[0].(map[string]interface{})["value"].(map[string]interface{})
+	
+	messages, exists := value["messages"].([]interface{})
+	if !exists || len(messages) == 0 {
 		c.Status(200)
 		return
 	}
 
-	entry := entryArr[0].(map[string]interface{})
-	change := entry["changes"].([]interface{})[0].(map[string]interface{})
-	value := change["value"].(map[string]interface{})
-
-	messages, exists := value["messages"]
-	if !exists {
-		c.Status(200)
-		return
-	}
-
-	msg := messages.([]interface{})[0].(map[string]interface{})
+	msg := messages[0].(map[string]interface{})
 	from := msg["from"].(string)
 	msgType := msg["type"].(string)
 
-	// 📸 IMAGE MESSAGE (Bill OCR)
-	if msgType == "image" {
+	switch msgType {
+	case "text":
+		text := msg["text"].(map[string]interface{})["body"].(string)
+		handleText(from, text)
+	case "image":
 		image := msg["image"].(map[string]interface{})
-		mediaID := image["id"].(string)
-
-		filePath := services.DownloadWhatsAppMedia(mediaID)
-		text, err := services.ExtractText(filePath)
-		if err != nil {
-			sendMessage(from, "❌ OCR failed")
-			c.Status(200)
-			return
-		}
-
-		amount := services.DetectAmount(text)
-		if amount > 0 {
-			services.AddExpense(amount, "Bill Image")
-			services.AppendRow(fmt.Sprintf("Bill Image ₹%.2f", amount))
-			sendMessage(from, fmt.Sprintf("🧾 Expense Added: ₹%.2f", amount))
+		path, _ := services.DownloadWhatsAppMedia(image["id"].(string))
+		text, _ := services.ExtractTextFromImage(path)
+		amt := services.DetectAmount(text)
+		if amt > 0 {
+			services.AddExpense(amt, "Bill OCR")
+			sendMessage(from, fmt.Sprintf("✅ Added from Image: ₹%.2f", amt))
 		} else {
-			sendMessage(from, "❌ Amount not detected")
+			sendMessage(from, "❌ Could not detect amount on bill.")
 		}
-	}
-
-	// 📝 TEXT MESSAGE
-	if msgType == "text" {
-		textBody := strings.ToLower(strings.TrimSpace(msg["text"].(map[string]interface{})["body"].(string)))
-
-		replyType, reply := handleUserText(from, textBody)
-
-		if replyType == "text" {
-			sendMessage(from, reply)
-		} else if replyType == "pdf" {
-			sendDocument(from, reply) // reply contains file path
+	case "audio":
+		audio := msg["audio"].(map[string]interface{})
+		path, _ := services.DownloadWhatsAppMedia(audio["id"].(string))
+		text, _ := services.SpeechToText(path)
+		note, amt, ok := services.ParseExpense(text)
+		if ok {
+			services.AddExpense(amt, note)
+			sendMessage(from, fmt.Sprintf("🎤 Voice Added: %s - ₹%.2f", note, amt))
 		}
 	}
 
 	c.Status(200)
 }
 
-func handleUserText(user, text string) (string, string) {
+func handleText(from, text string) {
+	cleanText := strings.ToLower(strings.TrimSpace(text))
 
-	// 👋 Greeting
-	if text == "hi" || text == "hello" || text == "hlo" {
-		return "text", "👋 Welcome to Expense Tracker Bot\n\nSend:\n📝 Lunch 200\n📸 Bill image\n💰 /expenses\n📄 /statement"
+	if cleanText == "hi" || cleanText == "hello" {
+		sendMessage(from, "👋 Welcome! Send 'Lunch 200', a bill photo, or '/expenses'.")
+		return
 	}
 
-	// 📄 Statement PDF
-	if text == "/statement" {
-		filePath := services.GenerateMonthlyPDF()
-		return "pdf", filePath
-	}
-
-	// 💰 Total Expenses
-	if text == "/expenses" {
+	if cleanText == "/expenses" {
 		total := services.GetTotalExpense()
-		return "text", fmt.Sprintf("💰 Total Expenses: ₹%.2f", total)
+		sendMessage(from, fmt.Sprintf("💰 Total: ₹%.2f", total))
+		return
 	}
 
-	// 🧾 Parse: "Lunch 200"
-	ok, title, amount := services.ParseExpenseText(text)
+	if cleanText == "/statement" {
+		file := services.GenerateMonthlyPDF()
+		sendDocument(from, file)
+		return
+	}
+
+	note, amt, ok := services.ParseExpense(text)
 	if ok {
-		services.AddExpense(amount, title)
-		services.AppendRow(fmt.Sprintf("%s ₹%.2f", title, amount))
-		return "text", fmt.Sprintf("✅ Added: %s ₹%.2f", title, amount)
+		services.AddExpense(amt, note)
+		sendMessage(from, fmt.Sprintf("✅ Added: %s - ₹%.2f", note, amt))
+	} else {
+		sendMessage(from, "❌ Try: 'Food 500'")
 	}
-
-	return "text", "❌ Invalid format.\nSend like: Lunch 200"
 }
 
-func sendMessage(phone, message string) {
+func sendMessage(to, text string) {
 	url := "https://graph.facebook.com/v18.0/" + os.Getenv("PHONE_NUMBER_ID") + "/messages"
-	token := os.Getenv("ACCESS_TOKEN")
-
-	payload := fmt.Sprintf(`{
+	payload := map[string]interface{}{
 		"messaging_product": "whatsapp",
-		"to": "%s",
-		"type": "text",
-		"text": {"body": "%s"}
-	}`, phone, message)
-
-	req, _ := http.NewRequest("POST", url, strings.NewReader(payload))
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	http.DefaultClient.Do(req)
+		"to":                to,
+		"type":              "text",
+		"text":              map[string]string{"body": text},
+	}
+	sendRequest(url, payload)
 }
 
-func sendDocument(phone, filePath string) {
+func sendDocument(to, fileName string) {
 	url := "https://graph.facebook.com/v18.0/" + os.Getenv("PHONE_NUMBER_ID") + "/messages"
-	token := os.Getenv("ACCESS_TOKEN")
-
-	fileURL := os.Getenv("BASE_URL") + "/public/" + filePath
-
-	payload := fmt.Sprintf(`{
+	fileURL := os.Getenv("BASE_URL") + "/public/" + fileName
+	payload := map[string]interface{}{
 		"messaging_product": "whatsapp",
-		"to": "%s",
-		"type": "document",
-		"document": {
-			"link": "%s",
-			"filename": "%s"
-		}
-	}`, phone, fileURL, filePath)
+		"to":                to,
+		"type":              "document",
+		"document": map[string]string{
+			"link":     fileURL,
+			"filename": "Statement.txt",
+		},
+	}
+	sendRequest(url, payload)
+}
 
-	req, _ := http.NewRequest("POST", url, strings.NewReader(payload))
-	req.Header.Set("Authorization", "Bearer "+token)
+func sendRequest(url string, payload interface{}) {
+	data, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", url, strings.NewReader(string(data)))
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("ACCESS_TOKEN"))
 	req.Header.Set("Content-Type", "application/json")
-
 	http.DefaultClient.Do(req)
 }

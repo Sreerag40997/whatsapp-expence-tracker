@@ -1,0 +1,5 @@
+credentials.json
+.env
+tmp/
+public/*.pdf
+public/*.txt

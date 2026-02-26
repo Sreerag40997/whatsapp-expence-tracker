@@ -11,7 +11,6 @@ var (
 	mu       sync.Mutex
 )
 
-// ➕ Add Expense
 func AddExpense(amount float64, note string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -21,9 +20,11 @@ func AddExpense(amount float64, note string) {
 		Note:   note,
 		Date:   time.Now(),
 	})
+
+	// Also sync to Google Sheets
+	AppendExpenseToSheet(note, amount)
 }
 
-// 💰 Get Total Expense
 func GetTotalExpense() float64 {
 	mu.Lock()
 	defer mu.Unlock()
@@ -35,20 +36,8 @@ func GetTotalExpense() float64 {
 	return total
 }
 
-// 📄 Get All Expenses (Safe Copy)
 func GetAllExpenses() []models.Expense {
 	mu.Lock()
 	defer mu.Unlock()
-
-	// important: return copy to avoid race condition
-	copySlice := make([]models.Expense, len(expenses))
-	copy(copySlice, expenses)
-	return copySlice
-}
-
-// 🧹 Reset Monthly (for month end cron later)
-func ResetExpenses() {
-	mu.Lock()
-	defer mu.Unlock()
-	expenses = []models.Expense{}
+	return expenses
 }
