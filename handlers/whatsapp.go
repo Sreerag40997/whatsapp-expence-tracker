@@ -51,7 +51,7 @@ func ReceiveMessage(c *gin.Context) {
 	from := msg["from"].(string)
 	msgType := msg["type"].(string)
 
-	// 📸 IMAGE MESSAGE
+	// 📸 IMAGE MESSAGE (Bill OCR)
 	if msgType == "image" {
 		image := msg["image"].(map[string]interface{})
 		mediaID := image["id"].(string)
@@ -66,6 +66,7 @@ func ReceiveMessage(c *gin.Context) {
 
 		amount := services.DetectAmount(text)
 		if amount > 0 {
+			services.AddExpense(amount, "Bill Image")
 			services.AppendRow(fmt.Sprintf("Bill Image ₹%.2f", amount))
 			sendMessage(from, fmt.Sprintf("🧾 Expense Added: ₹%.2f", amount))
 		} else {
@@ -75,46 +76,48 @@ func ReceiveMessage(c *gin.Context) {
 
 	// 📝 TEXT MESSAGE
 	if msgType == "text" {
-		textBody := strings.ToLower(msg["text"].(map[string]interface{})["body"].(string))
+		textBody := strings.ToLower(strings.TrimSpace(msg["text"].(map[string]interface{})["body"].(string)))
 
-		reply := handleUserText(from, textBody)
-		sendMessage(from, reply)
+		replyType, reply := handleUserText(from, textBody)
+
+		if replyType == "text" {
+			sendMessage(from, reply)
+		} else if replyType == "pdf" {
+			sendDocument(from, reply) // reply contains file path
+		}
 	}
 
 	c.Status(200)
 }
 
-func handleUserText(user, text string) string {
+func handleUserText(user, text string) (string, string) {
 
 	// 👋 Greeting
 	if text == "hi" || text == "hello" || text == "hlo" {
-		return "👋 Welcome to Expense Tracker Bot\n\n" +
-			"Send:\n" +
-			"📝 Lunch 200\n" +
-			"📄 /statement\n" +
-			"💰 /expenses"
+		return "text", "👋 Welcome to Expense Tracker Bot\n\nSend:\n📝 Lunch 200\n📸 Bill image\n💰 /expenses\n📄 /statement"
 	}
 
-	// 📄 Statement
+	// 📄 Statement PDF
 	if text == "/statement" {
-		file := services.GenerateMonthlyPDF()
-		return fmt.Sprintf("📄 Statement generated: %s", file)
+		filePath := services.GenerateMonthlyPDF()
+		return "pdf", filePath
 	}
 
 	// 💰 Total Expenses
 	if text == "/expenses" {
 		total := services.GetTotalExpense()
-		return fmt.Sprintf("💰 Total Expenses: ₹%.2f", total)
+		return "text", fmt.Sprintf("💰 Total Expenses: ₹%.2f", total)
 	}
 
-	// 🧾 Detect normal expense text: "Lunch 200"
+	// 🧾 Parse: "Lunch 200"
 	ok, title, amount := services.ParseExpenseText(text)
 	if ok {
+		services.AddExpense(amount, title)
 		services.AppendRow(fmt.Sprintf("%s ₹%.2f", title, amount))
-		return fmt.Sprintf("✅ Added: %s ₹%.2f", title, amount)
+		return "text", fmt.Sprintf("✅ Added: %s ₹%.2f", title, amount)
 	}
 
-	return "❌ Invalid format.\nSend like: Lunch 200"
+	return "text", "❌ Invalid format.\nSend like: Lunch 200"
 }
 
 func sendMessage(phone, message string) {
@@ -127,6 +130,29 @@ func sendMessage(phone, message string) {
 		"type": "text",
 		"text": {"body": "%s"}
 	}`, phone, message)
+
+	req, _ := http.NewRequest("POST", url, strings.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	http.DefaultClient.Do(req)
+}
+
+func sendDocument(phone, filePath string) {
+	url := "https://graph.facebook.com/v18.0/" + os.Getenv("PHONE_NUMBER_ID") + "/messages"
+	token := os.Getenv("ACCESS_TOKEN")
+
+	fileURL := os.Getenv("BASE_URL") + "/public/" + filePath
+
+	payload := fmt.Sprintf(`{
+		"messaging_product": "whatsapp",
+		"to": "%s",
+		"type": "document",
+		"document": {
+			"link": "%s",
+			"filename": "%s"
+		}
+	}`, phone, fileURL, filePath)
 
 	req, _ := http.NewRequest("POST", url, strings.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+token)
