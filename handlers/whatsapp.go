@@ -37,29 +37,9 @@ func ReceiveMessage(c *gin.Context) {
 		return
 	}
 
-	entry, ok := entryArr[0].(map[string]interface{})
-	if !ok {
-		c.Status(200)
-		return
-	}
-
-	changesArr, ok := entry["changes"].([]interface{})
-	if !ok || len(changesArr) == 0 {
-		c.Status(200)
-		return
-	}
-
-	change, ok := changesArr[0].(map[string]interface{})
-	if !ok {
-		c.Status(200)
-		return
-	}
-
-	value, ok := change["value"].(map[string]interface{})
-	if !ok {
-		c.Status(200)
-		return
-	}
+	entry := entryArr[0].(map[string]interface{})
+	change := entry["changes"].([]interface{})[0].(map[string]interface{})
+	value := change["value"].(map[string]interface{})
 
 	messages, exists := value["messages"]
 	if !exists {
@@ -67,13 +47,7 @@ func ReceiveMessage(c *gin.Context) {
 		return
 	}
 
-	msgArr := messages.([]interface{})
-	if len(msgArr) == 0 {
-		c.Status(200)
-		return
-	}
-
-	msg := msgArr[0].(map[string]interface{})
+	msg := messages.([]interface{})[0].(map[string]interface{})
 	from := msg["from"].(string)
 	msgType := msg["type"].(string)
 
@@ -82,10 +56,7 @@ func ReceiveMessage(c *gin.Context) {
 		image := msg["image"].(map[string]interface{})
 		mediaID := image["id"].(string)
 
-		// Download image from WhatsApp
 		filePath := services.DownloadWhatsAppMedia(mediaID)
-
-		// OCR
 		text, err := services.ExtractText(filePath)
 		if err != nil {
 			sendMessage(from, "❌ OCR failed")
@@ -94,36 +65,56 @@ func ReceiveMessage(c *gin.Context) {
 		}
 
 		amount := services.DetectAmount(text)
-
 		if amount > 0 {
-			services.AddExpense(amount, "Bill Image")
-			sendMessage(from, fmt.Sprintf("🧾 ₹%.2f added", amount))
+			services.AppendRow(fmt.Sprintf("Bill Image ₹%.2f", amount))
+			sendMessage(from, fmt.Sprintf("🧾 Expense Added: ₹%.2f", amount))
 		} else {
 			sendMessage(from, "❌ Amount not detected")
 		}
 	}
 
-	// 📝 TEXT MESSAGE COMMANDS
+	// 📝 TEXT MESSAGE
 	if msgType == "text" {
-		textMap := msg["text"].(map[string]interface{})
-		textBody := strings.ToLower(textMap["body"].(string))
+		textBody := strings.ToLower(msg["text"].(map[string]interface{})["body"].(string))
 
-		switch textBody {
-
-		case "/expenses":
-			total := services.GetTotalExpense()
-			sendMessage(from, fmt.Sprintf("💰 Total Expenses: ₹%.2f", total))
-
-		case "/statement":
-			file := services.GenerateMonthlyPDF()
-			sendMessage(from, fmt.Sprintf("📄 Statement generated: %s", file))
-
-		default:
-			sendMessage(from, "Send /expenses or /statement")
-		}
+		reply := handleUserText(from, textBody)
+		sendMessage(from, reply)
 	}
 
 	c.Status(200)
+}
+
+func handleUserText(user, text string) string {
+
+	// 👋 Greeting
+	if text == "hi" || text == "hello" || text == "hlo" {
+		return "👋 Welcome to Expense Tracker Bot\n\n" +
+			"Send:\n" +
+			"📝 Lunch 200\n" +
+			"📄 /statement\n" +
+			"💰 /expenses"
+	}
+
+	// 📄 Statement
+	if text == "/statement" {
+		file := services.GenerateMonthlyPDF()
+		return fmt.Sprintf("📄 Statement generated: %s", file)
+	}
+
+	// 💰 Total Expenses
+	if text == "/expenses" {
+		total := services.GetTotalExpense()
+		return fmt.Sprintf("💰 Total Expenses: ₹%.2f", total)
+	}
+
+	// 🧾 Detect normal expense text: "Lunch 200"
+	ok, title, amount := services.ParseExpenseText(text)
+	if ok {
+		services.AppendRow(fmt.Sprintf("%s ₹%.2f", title, amount))
+		return fmt.Sprintf("✅ Added: %s ₹%.2f", title, amount)
+	}
+
+	return "❌ Invalid format.\nSend like: Lunch 200"
 }
 
 func sendMessage(phone, message string) {

@@ -2,17 +2,12 @@ package services
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"time"
 
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 )
-
-// Env:
-// GOOGLE_CREDENTIALS_JSON = path to service account json
-// SHEET_ID = your google sheet id
 
 func AppendRow(text string) error {
 	ctx := context.Background()
@@ -22,7 +17,7 @@ func AppendRow(text string) error {
 
 	srv, err := sheets.NewService(ctx, option.WithCredentialsFile(credFile))
 	if err != nil {
-		return fmt.Errorf("unable to create sheets service: %v", err)
+		return err
 	}
 
 	date := time.Now().Format("02-01-2006 15:04")
@@ -36,9 +31,5 @@ func AppendRow(text string) error {
 		&sheets.ValueRange{Values: values},
 	).ValueInputOption("RAW").Do()
 
-	if err != nil {
-		return fmt.Errorf("unable to append row: %v", err)
-	}
-
-	return nil
+	return err
 }
