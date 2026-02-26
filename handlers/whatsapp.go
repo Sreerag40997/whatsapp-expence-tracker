@@ -67,15 +67,15 @@ func ReceiveMessage(c *gin.Context) {
 			break
 		}
 
-		text, err := services.ExtractTextFromImage(path)
+		ocrText, err := services.ExtractTextFromImage(path)
 		if err != nil {
 			sendMessage(from, "❌ OCR failed on image")
 			break
 		}
 
-		amt := services.DetectAmount(text)
+		amt := services.DetectAmount(ocrText)
 		if amt > 0 {
-			services.AddExpense(amt, "Bill OCR")
+			services.AddExpense(amt, "Bill OCR") 
 			sendMessage(from, fmt.Sprintf("🧾 Added from Bill: ₹%.2f", amt))
 		} else {
 			sendMessage(from, "❌ Could not detect amount on bill. Try clear image.")
@@ -90,17 +90,17 @@ func ReceiveMessage(c *gin.Context) {
 		}
 
 		text, err := services.SpeechToText(path)
-		if err != nil || text == "" {
-			sendMessage(from, "❌ Voice recognition failed. Speak like 'Food 200'")
+		if err != nil {
+			sendMessage(from, "❌ Voice recognition failed")
 			break
 		}
 
 		note, amt, ok := services.ParseExpense(text)
 		if ok {
 			services.AddExpense(amt, note)
-			sendMessage(from, fmt.Sprintf("🎤 Voice Added: %s - ₹%.2f", note, amt))
+			sendMessage(from, fmt.Sprintf("🎤 Added: %s ₹%.2f", note, amt))
 		} else {
-			sendMessage(from, "❌ Could not understand voice. Say like 'Lunch 200'")
+			sendMessage(from, "❌ Speak like: Food 200")
 		}
 	}
 
@@ -112,14 +112,14 @@ func handleText(from, text string) {
 
 	if cleanText == "hi" || cleanText == "hello" || cleanText == "hlo" {
 		greeting := "Hello Sir! 👋\n\n" +
-			"I am your *Personal Expense Tracker Bot*, designed to help you track your spending and keep your finances stable and organized. 📈\n\n" +
+			"I am your *Personal Expense Tracker Bot*, designed to help you track your spending and keep your finances organized. 📊\n\n" +
 			"*How to record an expense:*\n" +
-			"📝 *Text:* Just type 'Lunch 200' or 'Petrol 500'\n" +
+			"📝 *Text:* Type 'Lunch 200' or 'Petrol 500'\n" +
 			"🎤 *Voice:* Send a voice note like \"Food 300\"\n" +
-			"📸 *Photo:* Send a clear picture of your bill/receipt\n\n" +
+			"📸 *Photo:* Send a clear picture of your bill\n\n" +
 			"*Reports & Commands:*\n" +
-			"💰 /expenses — View your total current expenses.\n" +
-			"📄 /statement — Get your detailed statement for the current month.\n\n" +
+			"💰 /expenses — View total expenses.\n" +
+			"📄 /statement — Get your monthly PDF statement.\n\n" +
 			"Simply send your first expense to get started!"
 
 		sendMessage(from, greeting)
@@ -128,11 +128,12 @@ func handleText(from, text string) {
 
 	if cleanText == "/expenses" {
 		total := services.GetTotalExpense()
-		sendMessage(from, fmt.Sprintf("💰 Total Expense: ₹%.2f", total))
+		sendMessage(from, fmt.Sprintf("💰 *Sir, your current total expense is:* ₹%.2f", total))
 		return
 	}
 
 	if cleanText == "/statement" {
+		sendMessage(from, "Generating your monthly statement, please wait... ⏳")
 		file := services.GenerateMonthlyPDF()
 		sendDocument(from, file)
 		return
@@ -141,9 +142,9 @@ func handleText(from, text string) {
 	note, amt, ok := services.ParseExpense(text)
 	if ok {
 		services.AddExpense(amt, note)
-		sendMessage(from, fmt.Sprintf("✅ Added: %s - ₹%.2f", note, amt))
+		sendMessage(from, fmt.Sprintf("✅ *Expense Added, Sir!*\n\n*Item:* %s\n*Amount:* ₹%.2f", note, amt))
 	} else {
-		sendMessage(from, "❌ Try format: Food 500")
+		sendMessage(from, "❌ *Invalid Format, Sir.*\n\nPlease send like: 'Dinner 500'\nOr use /expenses to see your total.")
 	}
 }
 
@@ -170,7 +171,7 @@ func sendDocument(to, fileName string) {
 		"type":              "document",
 		"document": map[string]string{
 			"link":     fileURL,
-			"filename": "Statement.pdf",
+			"filename": "Monthly_Statement.pdf",
 		},
 	}
 
