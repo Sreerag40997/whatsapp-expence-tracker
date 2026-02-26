@@ -6,43 +6,50 @@ import (
 	"strings"
 )
 
-// ParseExpense parses strings like "Lunch 200" or "200 food"
+// ParseExpense -> "Lunch 200" , "food 300"
 func ParseExpense(text string) (string, float64, bool) {
-	parts := strings.Fields(text)
-	if len(parts) < 2 {
+	text = strings.TrimSpace(text)
+	text = strings.ToLower(text)
+
+	// regex to find amount
+	re := regexp.MustCompile(`(\d+(\.\d+)?)`)
+	match := re.FindString(text)
+
+	if match == "" {
 		return "", 0, false
 	}
 
-	// Check if last word is amount
-	if amt, err := strconv.ParseFloat(parts[len(parts)-1], 64); err == nil {
-		note := strings.Join(parts[:len(parts)-1], " ")
-		return note, amt, true
+	amt, err := strconv.ParseFloat(match, 64)
+	if err != nil {
+		return "", 0, false
 	}
 
-	// Check if first word is amount
-	if amt, err := strconv.ParseFloat(parts[0], 64); err == nil {
-		note := strings.Join(parts[1:], " ")
-		return note, amt, true
+	// remove amount from string to get note
+	note := strings.Replace(text, match, "", 1)
+	note = strings.TrimSpace(note)
+
+	if note == "" {
+		note = "Expense"
 	}
 
-	return "", 0, false
+	return note, amt, true
 }
 
-// DetectAmount specifically for OCR text
 func DetectAmount(text string) float64 {
-	re := regexp.MustCompile(`\d+(\.\d+)?`)
+	text = strings.ToLower(text)
+
+	re := regexp.MustCompile(`(\d+(\.\d{1,2})?)`)
 	matches := re.FindAllString(text, -1)
-	
+
 	if len(matches) == 0 {
 		return 0
 	}
 
-	var max float64
-	for _, m := range matches {
-		val, _ := strconv.ParseFloat(m, 64)
-		if val > max {
-			max = val
-		}
+	last := matches[len(matches)-1]
+	amt, err := strconv.ParseFloat(last, 64)
+	if err != nil {
+		return 0
 	}
-	return max
+
+	return amt
 }

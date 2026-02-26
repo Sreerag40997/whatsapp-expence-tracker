@@ -1,25 +1,25 @@
 package services
 
-import "fmt"
+import (
+	"context"
+	"os"
 
+	openai "github.com/sashabaranov/go-openai"
+)
 
 func SpeechToText(audioPath string) (string, error) {
-	
-	return "Dinner 500", nil 
-}
+	client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
 
-func HandleVoiceExpense(audioPath string) (float64, string, error) {
-	text, err := SpeechToText(audioPath)
+	resp, err := client.CreateTranscription(
+		context.Background(),
+		openai.AudioRequest{
+			Model:    openai.Whisper1,
+			FilePath: audioPath,
+		},
+	)
 	if err != nil {
-		return 0, "", fmt.Errorf("speech to text failed: %v", err)
+		return "", err
 	}
 
-	note, amount, ok := ParseExpense(text)
-	if !ok {
-		return 0, "", fmt.Errorf("could not parse expense from text: %s", text)
-	}
-
-	AddExpense(amount, note)
-
-	return amount, note, nil
+	return resp.Text, nil
 }
