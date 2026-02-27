@@ -3,7 +3,6 @@ package services
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,22 +13,20 @@ import (
 
 func SpeechToText(audioPath string) (string, error) {
 	wavPath := audioPath + ".wav"
-	// Ensure ffmpeg is in your system PATH
+	// FFmpeg conversion
 	cmd := exec.Command("ffmpeg", "-y", "-i", audioPath, wavPath)
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ffmpeg error: %v", err)
+		return "", err
 	}
 	defer os.Remove(wavPath)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	
 	file, _ := os.Open(wavPath)
 	part, _ := writer.CreateFormFile("file", filepath.Base(wavPath))
 	io.Copy(part, file)
 	file.Close()
-
-	_ = writer.WriteField("model", "whisper-1")
+	writer.WriteField("model", "whisper-1")
 	writer.Close()
 
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", body)

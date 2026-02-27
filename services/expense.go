@@ -9,7 +9,7 @@ import (
 
 var (
 	expenses []models.Expense
-	limit    float64 = 0 // 0 means no limit set
+	limit    float64 = 0
 	mu       sync.Mutex
 )
 
@@ -28,38 +28,59 @@ func AddExpense(amount float64, note string) (string, bool) {
 		total += e.Amount
 	}
 
-	// Check Limit
 	if limit > 0 && total > limit {
-		warning := fmt.Sprintf("⚠️ WARNING: You have exceeded your limit of ₹%.2f! (Current Total: ₹%.2f)", limit, total)
-		return warning, true
+		return fmt.Sprintf("⚠️ *LIMIT EXCEEDED!*\nLimit: ₹%.2f\nTotal: ₹%.2f", limit, total), true
 	}
 	return "", false
 }
 
-func SetLimit(amt float64) {
+func GetMonthlySummary(month int, year int) string {
 	mu.Lock()
 	defer mu.Unlock()
-	limit = amt
-}
 
-func ResetExpenses() {
-	mu.Lock()
-	defer mu.Unlock()
-	expenses = []models.Expense{}
+	// Default to current month/year if not provided
+	now := time.Now()
+	if month == 0 { month = int(now.Month()) }
+	if year == 0 { year = now.Year() }
+
+	var total float64
+	itemsText := ""
+	
+	for _, e := range expenses {
+		if int(e.Date.Month()) == month && e.Date.Year() == year {
+			itemsText += fmt.Sprintf("• %s: ₹%.2f\n", e.Note, e.Amount)
+			total += e.Amount
+		}
+	}
+
+	if itemsText == "" {
+		return fmt.Sprintf("📝 No expenses recorded for %02d/%d", month, year)
+	}
+
+	bill := fmt.Sprintf("🧾 *EXPENSE BILL (%02d/%d)*\n", month, year)
+	bill += "--------------------------\n"
+	bill += itemsText
+	bill += "--------------------------\n"
+	bill += fmt.Sprintf("💰 *TOTAL: ₹%.2f*\n", total)
+	
+	if limit > 0 {
+		bill += fmt.Sprintf("📊 *LIMIT: ₹%.2f*\n", limit)
+		if total > limit {
+			bill += fmt.Sprintf("⚠️ *OVER BY: ₹%.2f*", total-limit)
+		} else {
+			bill += fmt.Sprintf("✅ *REMAINING: ₹%.2f*", limit-total)
+		}
+	}
+	return bill
 }
 
 func GetTotalExpense() float64 {
 	mu.Lock()
 	defer mu.Unlock()
 	var total float64
-	for _, e := range expenses {
-		total += e.Amount
-	}
+	for _, e := range expenses { total += e.Amount }
 	return total
 }
 
-func GetAllExpenses() []models.Expense {
-	mu.Lock()
-	defer mu.Unlock()
-	return expenses
-}
+func SetLimit(amt float64) { limit = amt }
+func ResetExpenses() { mu.Lock(); expenses = []models.Expense{}; mu.Unlock() }
