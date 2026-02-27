@@ -4,38 +4,32 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 )
 
-// Convert WhatsApp voice (ogg) -> text using Whisper API
-func SpeechToText(filePath string) (string, error) {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-
-	file, err := os.Open(filePath)
-	if err != nil {
+func SpeechToText(audioPath string) (string, error) {
+	// convert to wav using ffmpeg
+	wavPath := "tmp/audio.wav"
+	cmd := exec.Command("C:\\ffmpeg\\bin\\ffmpeg.exe", "-y", "-i", audioPath, wavPath)
+	if err := cmd.Run(); err != nil {
 		return "", err
 	}
+
+	// OpenAI Whisper API
+	apiKey := os.Getenv("OPENAI_API_KEY")
+
+	file, _ := os.Open(wavPath)
 	defer file.Close()
 
 	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
+	writer := io.MultiWriter(body)
+	io.Copy(writer, file)
 
-	// add file
-	part, _ := writer.CreateFormFile("file", "audio.ogg")
-	io.Copy(part, file)
-
-	// model
-	writer.WriteField("model", "whisper-1")
-	writer.Close()
-
-	req, _ := http.NewRequest("POST",
-		"https://api.openai.com/v1/audio/transcriptions",
-		body)
-
+	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", body)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "audio/wav")
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -47,6 +41,5 @@ func SpeechToText(filePath string) (string, error) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
-	text, _ := result["text"].(string)
-	return text, nil
+	return result["text"].(string), nil
 }

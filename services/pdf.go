@@ -2,18 +2,29 @@ package services
 
 import (
 	"fmt"
-	"os"
 	"time"
+
+	"github.com/jung-kurt/gofpdf"
 )
 
 func GenerateMonthlyPDF() string {
-	fileName := fmt.Sprintf("statement_%d.txt", time.Now().Unix()) 
-	content := "--- Monthly Expense Statement ---\n"
-	for _, e := range GetAllExpenses() {
-		content += fmt.Sprintf("%s: %s - ₹%.2f\n", e.Date.Format("2006-01-02"), e.Note, e.Amount)
+	fileName := fmt.Sprintf("statement_%d.pdf", time.Now().Unix())
+	filePath := "public/" + fileName
+
+	pdf := gofpdf.New("P", "mm", "A4", "")
+	pdf.AddPage()
+	pdf.SetFont("Arial", "B", 16)
+	pdf.Cell(40, 10, "Monthly Expense Statement")
+
+	expenses := GetAllExpenses()
+	pdf.Ln(10)
+
+	for _, e := range expenses {
+		line := fmt.Sprintf("%s - ₹%.2f", e.Note, e.Amount)
+		pdf.Cell(40, 10, line)
+		pdf.Ln(8)
 	}
 
-	os.MkdirAll("public", 0755)
-	os.WriteFile("public/"+fileName, []byte(content), 0644)
+	pdf.OutputFileAndClose(filePath)
 	return fileName
 }
