@@ -3,43 +3,48 @@ package services
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 func SpeechToText(audioPath string) (string, error) {
-	// convert to wav using ffmpeg
-	wavPath := "tmp/audio.wav"
-	cmd := exec.Command("C:\\ffmpeg\\bin\\ffmpeg.exe", "-y", "-i", audioPath, wavPath)
+	wavPath := audioPath + ".wav"
+	// Ensure ffmpeg is in your system PATH
+	cmd := exec.Command("ffmpeg", "-y", "-i", audioPath, wavPath)
 	if err := cmd.Run(); err != nil {
-		return "", err
+		return "", fmt.Errorf("ffmpeg error: %v", err)
 	}
-
-	// OpenAI Whisper API
-	apiKey := os.Getenv("OPENAI_API_KEY")
-
-	file, _ := os.Open(wavPath)
-	defer file.Close()
+	defer os.Remove(wavPath)
 
 	body := &bytes.Buffer{}
-	writer := io.MultiWriter(body)
-	io.Copy(writer, file)
+	writer := multipart.NewWriter(body)
+	
+	file, _ := os.Open(wavPath)
+	part, _ := writer.CreateFormFile("file", filepath.Base(wavPath))
+	io.Copy(part, file)
+	file.Close()
+
+	_ = writer.WriteField("model", "whisper-1")
+	writer.Close()
 
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", body)
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "audio/wav")
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("OPENAI_API_KEY"))
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
+	var result struct {
+		Text string `json:"text"`
+	}
 	json.NewDecoder(resp.Body).Decode(&result)
-
-	return result["text"].(string), nil
+	return result.Text, nil
 }
