@@ -4,7 +4,7 @@ go 1.25.5
 
 require (
 	github.com/gin-gonic/gin v1.11.0
-	github.com/jung-kurt/gofpdf v1.16.2
+	github.com/sashabaranov/go-openai v1.41.2
 	google.golang.org/api v0.269.0
 )
 
@@ -24,7 +24,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
-	github.com/go-resty/resty/v2 v2.17.2 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
@@ -40,7 +39,6 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.54.0 // indirect
-	github.com/sashabaranov/go-openai v1.41.2 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.3.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

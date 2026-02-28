@@ -19,8 +19,8 @@ func ExtractTextFromImage(path string) (string, error) {
 }
 
 func DetectAmount(text string) float64 {
-	// Clean text and look for "Total" or "Amount" lines
-	re := regexp.MustCompile(`(?i)(?:total|sum|amount|net|payable|ആകെ|തുക)[:\s]*[^\d]*(\d+[\.,]\d{2}|\d+)`)
+	// Updated Regex to capture decimals better (.6 or .60)
+	re := regexp.MustCompile(`(?i)(?:total|sum|amount|net|payable|ആകെ|തുക)[:\s]*[^\d]*(\d+[\.,]\d{1,2})`)
 	matches := re.FindAllStringSubmatch(text, -1)
 
 	if len(matches) > 0 {
@@ -30,7 +30,7 @@ func DetectAmount(text string) float64 {
 		return amt
 	}
 
-	// Fallback: Pick the largest decimal number on the bill
+	// Fallback to largest number
 	reFallback := regexp.MustCompile(`\d+[\.,]\d{2}`)
 	nums := reFallback.FindAllString(text, -1)
 	var max float64
