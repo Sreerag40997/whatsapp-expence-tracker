@@ -28,6 +28,11 @@ func ReceiveMessage(c *gin.Context) {
 		return
 	}
 
+	if len(body["entry"].([]interface{})) == 0 {
+		c.Status(200)
+		return
+	}
+
 	entry, _ := body["entry"].([]interface{})[0].(map[string]interface{})
 	change, _ := entry["changes"].([]interface{})[0].(map[string]interface{})
 	value, _ := change["value"].(map[string]interface{})
@@ -36,14 +41,14 @@ func ReceiveMessage(c *gin.Context) {
 		msg := msgs[0].(map[string]interface{})
 		from := msg["from"].(string)
 
-		// 1. BUTTON CLICKS
+		// 1. HANDLE BUTTON CLICKS
 		if interactive, ok := msg["interactive"]; ok {
 			btnID := interactive.(map[string]interface{})["button_reply"].(map[string]interface{})["id"].(string)
 			handleText(from, btnID)
 			return
 		}
 
-		// 2. TEXT/MEDIA ROUTING
+		// 2. HANDLE TEXT/MEDIA ROUTING
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "text":
@@ -127,35 +132,44 @@ func handleText(from, text string) {
 	}
 }
 
-// MEDIA HANDLERS
 func processImage(from string, image map[string]interface{}) {
 	sendMessage(from, "🔍 *Analyzing bill...*")
+
+	// Download with proper 2-step Meta pattern
 	path, err := services.DownloadWhatsAppMedia(image["id"].(string))
 	if err != nil {
-		sendMessage(from, "❌ *Download Error:* I couldn't retrieve the image.")
+		fmt.Println("❌ Download Error:", err)
+		sendMessage(from, "❌ *Download Failed:* Could not fetch image from WhatsApp.")
 		return
 	}
+
+	fmt.Println("📸 Running OCR on:", path)
 	text, _ := services.ExtractTextFromImage(path)
 	amt := services.DetectAmount(text)
+	fmt.Printf("💰 Detected Amount: ₹%.2f\n", amt)
+
 	if amt > 0 {
-		warn, over := services.AddExpense(amt, "Bill Photo")
+		warn, over := services.AddExpense(amt, "Bill Photo Scan")
 		res := fmt.Sprintf("📸 *Scan Complete!*\nAdded *₹%.2f* for *Bill Photo*.", amt)
 		if over {
 			res += "\n\n" + warn
 		}
 		sendMessage(from, res)
 	} else {
-		sendMessage(from, "❌ *OCR Error:* Amount not detected. Please type manually.")
+		sendMessage(from, "❌ *Amount Not Found:* I read the bill but couldn't find the Total. Please type it manually.")
 	}
 	sendFollowUp(from)
 }
 
 func processAudio(from string, audio map[string]interface{}) {
 	sendMessage(from, "🎧 *Processing voice...*")
-	path, _ := services.DownloadWhatsAppMedia(audio["id"].(string))
-	text, err := services.SpeechToText(path)
+	path, err := services.DownloadWhatsAppMedia(audio["id"].(string))
+	if err != nil {
+		sendMessage(from, "❌ *Download Failed:* Voice note not retrieved.")
+		return
+	}
 
-	// Handling the Quota Error
+	text, err := services.SpeechToText(path)
 	if err != nil && err.Error() == "OPENAI_QUOTA_EXCEEDED" {
 		sendMessage(from, "⚠️ *Voice Service Busy:* My transcription limit is finished. Please type your expense manually for now!")
 		return
@@ -170,7 +184,7 @@ func processAudio(from string, audio map[string]interface{}) {
 		}
 		sendMessage(from, res)
 	} else {
-		sendMessage(from, "❌ *Error:* I heard \""+text+"\" but no amount found.")
+		sendMessage(from, "❌ *Error:* I heard \""+text+"\" but couldn't find an amount.")
 	}
 	sendFollowUp(from)
 }
