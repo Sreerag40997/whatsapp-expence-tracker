@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -12,21 +13,31 @@ import (
 )
 
 func SpeechToText(audioPath string) (string, error) {
+	// WhatsApp sends .ogg (opus). Whisper prefers .mp3 or .wav
 	wavPath := audioPath + ".wav"
-	// FFmpeg conversion
-	cmd := exec.Command("ffmpeg", "-y", "-i", audioPath, wavPath)
+	
+	// Ensure ffmpeg is installed and in your PATH
+	cmd := exec.Command("ffmpeg", "-y", "-i", audioPath, "-ar", "16000", "-ac", "1", wavPath)
 	if err := cmd.Run(); err != nil {
-		return "", err
+		return "", fmt.Errorf("ffmpeg error: %v", err)
 	}
 	defer os.Remove(wavPath)
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	file, _ := os.Open(wavPath)
+	
+	file, err := os.Open(wavPath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
 	part, _ := writer.CreateFormFile("file", filepath.Base(wavPath))
 	io.Copy(part, file)
-	file.Close()
+	
 	writer.WriteField("model", "whisper-1")
+	// Whisper auto-detects Malayalam, but you can hint it:
+	writer.WriteField("language", "ml") 
 	writer.Close()
 
 	req, _ := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", body)

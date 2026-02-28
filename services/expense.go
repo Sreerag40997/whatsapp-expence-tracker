@@ -13,6 +13,7 @@ var (
 	mu       sync.Mutex
 )
 
+// AddExpense adds a record and returns a warning if the budget is blown
 func AddExpense(amount float64, note string) (string, bool) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -27,7 +28,8 @@ func AddExpense(amount float64, note string) (string, bool) {
 	}
 
 	if limit > 0 && total > limit {
-		return fmt.Sprintf("⚠️ *BUDGET WARNING*\nYou have crossed your set limit of ₹%.2f!", limit), true
+		overBy := total - limit
+		return fmt.Sprintf("⚠️ *BUDGET WARNING*\nYou have crossed your limit of ₹%.2f by ₹%.2f!", limit, overBy), true
 	}
 	return "", false
 }
@@ -62,6 +64,7 @@ func GetMonthlySummary(month int, year int) string {
 	bill += itemsText
 	bill += "━━━━━━━━━━━━━━━━━━━━\n"
 	bill += fmt.Sprintf("💰 *TOTAL SPENT : ₹%.2f*\n", total)
+
 	if limit > 0 {
 		bill += fmt.Sprintf("🎯 *MONTHLY GOAL : ₹%.2f*\n", limit)
 		if total > limit {
@@ -83,5 +86,21 @@ func GetTotalExpense() float64 {
 	return total
 }
 
-func SetLimit(amt float64) { limit = amt }
-func ResetExpenses()       { mu.Lock(); expenses = []models.Expense{}; mu.Unlock() }
+func SetLimit(amt float64) {
+	mu.Lock()
+	limit = amt
+	mu.Unlock()
+}
+
+func GetLimit() float64 {
+	mu.Lock()
+	defer mu.Unlock()
+	return limit
+}
+
+func ResetExpenses() {
+	mu.Lock()
+	expenses = []models.Expense{}
+	limit = 0 // Reset limit too if you want a fresh start
+	mu.Unlock()
+}

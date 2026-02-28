@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +23,15 @@ func VerifyWebhook(c *gin.Context) {
 
 func ReceiveMessage(c *gin.Context) {
 	var body map[string]interface{}
-	json.NewDecoder(c.Request.Body).Decode(&body)
+	if err := json.NewDecoder(c.Request.Body).Decode(&body); err != nil {
+		c.Status(400)
+		return
+	}
+
+	if len(body["entry"].([]interface{})) == 0 {
+		c.Status(200)
+		return
+	}
 
 	entry, _ := body["entry"].([]interface{})[0].(map[string]interface{})
 	change, _ := entry["changes"].([]interface{})[0].(map[string]interface{})
@@ -32,50 +41,23 @@ func ReceiveMessage(c *gin.Context) {
 		msg := msgs[0].(map[string]interface{})
 		from := msg["from"].(string)
 
-		// HANDLE BUTTON CLICKS
+		// 1. HANDLE BUTTON CLICKS
 		if interactive, ok := msg["interactive"]; ok {
 			btnID := interactive.(map[string]interface{})["button_reply"].(map[string]interface{})["id"].(string)
 			handleText(from, btnID)
+			c.Status(200)
 			return
 		}
 
-		// HANDLE TEXT/MEDIA
-		msgType := msg["type"].(string)
+		// 2. HANDLE TEXT/MEDIA
+		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "text":
 			handleText(from, msg["text"].(map[string]interface{})["body"].(string))
 		case "image":
-			sendMessage(from, "🔍 *Analyzing your bill image...*")
-			image := msg["image"].(map[string]interface{})
-			path, _ := services.DownloadWhatsAppMedia(image["id"].(string))
-			text, _ := services.ExtractTextFromImage(path)
-			amt := services.DetectAmount(text)
-			if amt > 0 {
-				warn, over := services.AddExpense(amt, "Bill Photo")
-				res := fmt.Sprintf("✅ *Bill Scanned!*\nAdded ₹%.2f to your records.", amt)
-				if over { res += "\n\n" + warn }
-				sendMessage(from, res)
-				sendFollowUp(from)
-			} else {
-				sendMessage(from, "❌ *OCR Failed:* I couldn't find a clear 'Total' amount. Try typing: `Lunch 200`")
-				sendFollowUp(from)
-			}
+			processImage(from, msg["image"].(map[string]interface{}))
 		case "audio":
-			sendMessage(from, "🎧 *Processing your voice note...*")
-			audio := msg["audio"].(map[string]interface{})
-			path, _ := services.DownloadWhatsAppMedia(audio["id"].(string))
-			text, _ := services.SpeechToText(path)
-			note, amt, ok := services.ParseExpense(text)
-			if ok {
-				warn, over := services.AddExpense(amt, note)
-				res := fmt.Sprintf("🎤 *Voice Note Added!*\nItem: %s\nAmount: ₹%.2f", note, amt)
-				if over { res += "\n\n" + warn }
-				sendMessage(from, res)
-				sendFollowUp(from)
-			} else {
-				sendMessage(from, "❌ *Voice Error:* I heard \""+text+"\" but couldn't understand the amount. Please say something like: 'Dinner 500'")
-				sendFollowUp(from)
-			}
+			processAudio(from, msg["audio"].(map[string]interface{}))
 		}
 	}
 	c.Status(200)
@@ -84,79 +66,128 @@ func ReceiveMessage(c *gin.Context) {
 func handleText(from, text string) {
 	cleanText := strings.ToLower(strings.TrimSpace(text))
 
-	// 1. WELCOME / HI
+	// WELCOME / HI
 	if cleanText == "hi" || cleanText == "hello" || cleanText == "/start" {
-		welcome := "👋 *Hello Sir! Welcome to ExpenseBot.*\n\n" +
-			"I am your premium assistant for tracking daily spending. You can talk to me just like a friend!\n\n" +
-			"💡 *Quick Ways to Add Expense:*\n" +
-			"• ✍️ *Text:* Send `Lunch 250` or `Fuel 1000` \n" +
-			"• 🎤 *Voice:* Send a voice note saying \"Food 500\"\n" +
-			"• 📸 *Photo:* Send a clear picture of your bill\n\n" +
-			"Would you like to see your current reports?"
-		sendButtons(from, welcome, []string{"YES_HELP", "NO_HELP"}, []string{"Yes, Please", "No, Thanks"})
+		welcome := "👋 *Hello Sir! Welcome to ExpenseBot.*\n\nI track your spending via Text, Voice, or Photos."
+		sendButtons(from, welcome, []string{"YES_HELP", "NO_HELP"}, []string{"Open Menu", "Dismiss"})
 		return
 	}
 
-	// 2. INTERNAL FLOW: YES / NO HELP
+	// MAIN MENU
 	if cleanText == "yes_help" {
-		menu := "📑 *Main Menu*\nSelect an option below to manage your finances:"
-		sendButtons(from, menu, []string{"/expenses", "/statement", "/reset_prompt"}, []string{"💰 View Total", "📜 Get Bill", "♻️ Reset All"})
+		menu := "📑 *Main Menu*\nSelect an option below:"
+		ids := []string{"/statement", "/set_limit_btn", "/reset_prompt"}
+		titles := []string{"📜 Get Summary", "🎯 Set Limit", "♻️ Reset All"}
+		sendButtons(from, menu, ids, titles)
 		return
 	}
 
-	if cleanText == "no_help" {
-		sendMessage(from, "👍 *Understood!* Just send me an expense whenever you're ready. Have a productive day! 🚀")
+	// SET LIMIT BUTTON CLICKED
+	if cleanText == "/set_limit_btn" {
+		sendMessage(from, "🎯 *Set Monthly Limit*\nPlease type `limit` followed by the amount.\n\nExample: `limit 5000`")
 		return
 	}
 
-	// 3. ACTUAL COMMANDS
-	if cleanText == "/expenses" {
-		total := services.GetTotalExpense()
-		sendMessage(from, fmt.Sprintf("💵 *Current Spending Status*\n━━━━━━━━━━━━━━━━━━\n💰 *TOTAL:* ₹%.2f\n━━━━━━━━━━━━━━━━━━", total))
-		sendFollowUp(from)
+	// PROCESS "limit 5000" TEXT
+	if strings.HasPrefix(cleanText, "limit ") {
+		parts := strings.Fields(cleanText)
+		if len(parts) == 2 {
+			val, err := strconv.ParseFloat(parts[1], 64)
+			if err == nil {
+				services.SetLimit(val)
+				sendMessage(from, fmt.Sprintf("✅ *Limit Updated!*\nYour budget is now ₹%.2f. I will warn you if you cross it.", val))
+				sendFollowUp(from)
+				return
+			}
+		}
+		sendMessage(from, "❌ *Invalid Format:* Please type `limit 5000`.")
 		return
 	}
 
+	// SUMMARY
 	if cleanText == "/statement" {
-		sendMessage(from, services.GetMonthlySummary(0, 0))
+		summary := services.GetMonthlySummary(0, 0)
+		sendMessage(from, summary)
 		sendFollowUp(from)
 		return
 	}
 
+	// RESET LOGIC
 	if cleanText == "/reset_prompt" {
-		sendButtons(from, "⚠️ *Are you sure?* This will delete all your current month records.", []string{"ACTUAL_RESET", "no_help"}, []string{"Yes, Reset", "Cancel"})
+		sendButtons(from, "⚠️ *Reset everything?*\nThis will delete all expenses and the limit.", []string{"ACTUAL_RESET", "no_help"}, []string{"Yes, Reset", "Cancel"})
 		return
 	}
 
 	if cleanText == "actual_reset" {
 		services.ResetExpenses()
-		sendMessage(from, "♻️ *Reset Successful!* Your balance is now ₹0.00.")
+		sendMessage(from, "♻️ *Reset Successful!* Your records have been cleared.")
 		sendFollowUp(from)
 		return
 	}
 
-	// 4. MANUAL EXPENSE ENTRY
+	if cleanText == "no_help" {
+		sendMessage(from, "👍 *Understood!* Send an expense whenever you are ready.")
+		return
+	}
+
+	// MANUAL EXPENSE ENTRY (e.g., "Pizza 500")
 	note, amt, ok := services.ParseExpense(text)
 	if ok {
 		warn, over := services.AddExpense(amt, note)
-		res := fmt.Sprintf("✅ *Expense Logged!*\n━━━━━━━━━━━━━━\n🔹 *Item:* %s\n💰 *Amount:* ₹%.2f\n📅 *Date:* %s\n━━━━━━━━━━━━━━",
-			note, amt, time.Now().Format("02 Jan 2006"))
-		if over { res += "\n\n" + warn }
+		res := fmt.Sprintf("✅ *Logged:* %s - ₹%.2f", note, amt)
+		if over {
+			res += "\n\n" + warn
+		}
 		sendMessage(from, res)
 		sendFollowUp(from)
 	} else {
-		sendMessage(from, "🤔 *Not sure how to handle that.*\nTry: `Item Amount` (e.g., `Pizza 400`) or type *Hi* for help.")
+		sendMessage(from, "🤔 *Not sure how to handle that.*\nTry: `Pizza 400` or click a button.")
 	}
 }
 
-// HELPER: Sends the "Do you need more help?" buttons
-func sendFollowUp(to string) {
-	// Slight delay feels more natural
-	time.Sleep(1 * time.Second)
-	sendButtons(to, "🤝 *Done, Sir!* Is there anything else I can help you with today?", []string{"YES_HELP", "NO_HELP"}, []string{"Yes, show menu", "No, I'm done"})
+// MEDIA PROCESSORS
+func processImage(from string, image map[string]interface{}) {
+	sendMessage(from, "🔍 *Analyzing bill...*")
+	path, _ := services.DownloadWhatsAppMedia(image["id"].(string))
+	text, _ := services.ExtractTextFromImage(path)
+	amt := services.DetectAmount(text)
+	if amt > 0 {
+		warn, over := services.AddExpense(amt, "Bill Photo")
+		res := fmt.Sprintf("✅ *Photo Scanned:* ₹%.2f", amt)
+		if over {
+			res += "\n\n" + warn
+		}
+		sendMessage(from, res)
+	} else {
+		sendMessage(from, "❌ Could not find amount in photo.")
+	}
+	sendFollowUp(from)
 }
 
-// GENERIC BUTTON SENDER
+func processAudio(from string, audio map[string]interface{}) {
+	sendMessage(from, "🎧 *Processing voice...*")
+	path, _ := services.DownloadWhatsAppMedia(audio["id"].(string))
+	text, _ := services.SpeechToText(path)
+	note, amt, ok := services.ParseExpense(text)
+	if ok {
+		warn, over := services.AddExpense(amt, note)
+		res := fmt.Sprintf("🎤 *Voice Added:* %s - ₹%.2f", note, amt)
+		if over {
+			res += "\n\n" + warn
+		}
+		sendMessage(from, res)
+	} else {
+		sendMessage(from, "❌ Could not understand voice amount.")
+	}
+	sendFollowUp(from)
+}
+
+// HELPERS
+func sendFollowUp(to string) {
+	time.Sleep(800 * time.Millisecond)
+	sendButtons(to, "🤝 Need anything else?", []string{"YES_HELP", "no_help"}, []string{"Show Menu", "I'm Done"})
+}
+
 func sendButtons(to, bodyText string, ids []string, titles []string) {
 	url := "https://graph.facebook.com/v18.0/" + os.Getenv("PHONE_NUMBER_ID") + "/messages"
 	btns := []map[string]interface{}{}
