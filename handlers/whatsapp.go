@@ -49,7 +49,7 @@ func ReceiveMessage(c *gin.Context) {
 			return
 		}
 
-		// 2. HANDLE TEXT/MEDIA
+		// 2. HANDLE MEDIA & TEXT
 		msgType, _ := msg["type"].(string)
 		switch msgType {
 		case "text":
@@ -66,45 +66,43 @@ func ReceiveMessage(c *gin.Context) {
 func handleText(from, text string) {
 	cleanText := strings.ToLower(strings.TrimSpace(text))
 
-	// WELCOME / HI
+	// WELCOME / START
 	if cleanText == "hi" || cleanText == "hello" || cleanText == "/start" {
-		welcome := "👋 *Hello Sir! Welcome to ExpenseBot.*\n\nI track your spending via Text, Voice, or Photos."
-		sendButtons(from, welcome, []string{"YES_HELP", "NO_HELP"}, []string{"Open Menu", "Dismiss"})
+		welcome := "🌟 *Premium Expense Assistant* 🌟\n━━━━━━━━━━━━━━━━━━━━\n" +
+			"Hello Sir! I am your dedicated financial manager.\n\n" +
+			"You can talk to me just like a friend:\n" +
+			"✍️ *Text:* `Lunch 250` or `500 Fuel` \n" +
+			"🎤 *Voice:* Malayalam or English audio \n" +
+			"📸 *Photo:* Bill or Receipt images"
+		sendButtons(from, welcome, []string{"yes_help", "no_help"}, []string{"📂 Dashboard", "❌ Close"})
 		return
 	}
 
 	// MAIN MENU
 	if cleanText == "yes_help" {
-		menu := "📑 *Main Menu*\nSelect an option below:"
-		ids := []string{"/statement", "/set_limit_btn", "/reset_prompt"}
-		titles := []string{"📜 Get Summary", "🎯 Set Limit", "♻️ Reset All"}
-		sendButtons(from, menu, ids, titles)
+		menu := "📑 *Finance Control Center*\nSelect an option to manage your data:"
+		sendButtons(from, menu, []string{"/statement", "/set_limit_btn", "/reset_prompt"}, []string{"📊 Statement", "🎯 Set Limit", "♻️ Reset All"})
 		return
 	}
 
-	// SET LIMIT BUTTON CLICKED
+	// BUDGET LIMIT
 	if cleanText == "/set_limit_btn" {
-		sendMessage(from, "🎯 *Set Monthly Limit*\nPlease type `limit` followed by the amount.\n\nExample: `limit 5000`")
+		sendMessage(from, "🎯 *Target Setting*\nPlease type `limit` followed by the amount.\n\nExample: `limit 5000`")
 		return
 	}
 
-	// PROCESS "limit 5000" TEXT
 	if strings.HasPrefix(cleanText, "limit ") {
 		parts := strings.Fields(cleanText)
 		if len(parts) == 2 {
-			val, err := strconv.ParseFloat(parts[1], 64)
-			if err == nil {
-				services.SetLimit(val)
-				sendMessage(from, fmt.Sprintf("✅ *Limit Updated!*\nYour budget is now ₹%.2f. I will warn you if you cross it.", val))
-				sendFollowUp(from)
-				return
-			}
+			val, _ := strconv.ParseFloat(parts[1], 64)
+			services.SetLimit(val)
+			sendMessage(from, fmt.Sprintf("✅ *Budget Set!*\nYour monthly target is now *₹%.2f*.\nI will notify you if you exceed this.", val))
+			sendFollowUp(from)
+			return
 		}
-		sendMessage(from, "❌ *Invalid Format:* Please type `limit 5000`.")
-		return
 	}
 
-	// SUMMARY
+	// STATEMENT
 	if cleanText == "/statement" {
 		summary := services.GetMonthlySummary(0, 0)
 		sendMessage(from, summary)
@@ -112,80 +110,82 @@ func handleText(from, text string) {
 		return
 	}
 
-	// RESET LOGIC
+	// RESET
 	if cleanText == "/reset_prompt" {
-		sendButtons(from, "⚠️ *Reset everything?*\nThis will delete all expenses and the limit.", []string{"ACTUAL_RESET", "no_help"}, []string{"Yes, Reset", "Cancel"})
+		sendButtons(from, "⚠️ *System Reset*\nSir, are you sure? This will delete all records permanently.", []string{"actual_reset", "no_help"}, []string{"Confirm Reset", "Cancel"})
 		return
 	}
 
 	if cleanText == "actual_reset" {
 		services.ResetExpenses()
-		sendMessage(from, "♻️ *Reset Successful!* Your records have been cleared.")
+		sendMessage(from, "♻️ *Reset Successful!*\nYour account has been cleared to ₹0.00.")
 		sendFollowUp(from)
 		return
 	}
 
 	if cleanText == "no_help" {
-		sendMessage(from, "👍 *Understood!* Send an expense whenever you are ready.")
+		sendMessage(from, "👍 *Understood!* I'm standing by whenever you need to log an expense.")
 		return
 	}
 
-	// MANUAL EXPENSE ENTRY (e.g., "Pizza 500")
+	// LOG MANUAL ENTRY
 	note, amt, ok := services.ParseExpense(text)
 	if ok {
 		warn, over := services.AddExpense(amt, note)
-		res := fmt.Sprintf("✅ *Logged:* %s - ₹%.2f", note, amt)
+		res := fmt.Sprintf("✅ *Expense Logged!*\n━━━━━━━━━━━━━━\n🔹 *Item:* %s\n💰 *Amount:* ₹%.2f\n📅 *Date:* %s\n━━━━━━━━━━━━━━",
+			note, amt, time.Now().Format("02 Jan 2006"))
 		if over {
 			res += "\n\n" + warn
 		}
 		sendMessage(from, res)
 		sendFollowUp(from)
 	} else {
-		sendMessage(from, "🤔 *Not sure how to handle that.*\nTry: `Pizza 400` or click a button.")
+		sendMessage(from, "🤔 *Pardon me?*\nI couldn't quite catch that. Try: `Lunch 200` or `500 Fuel`.")
 	}
 }
 
 // MEDIA PROCESSORS
 func processImage(from string, image map[string]interface{}) {
-	sendMessage(from, "🔍 *Analyzing bill...*")
+	sendMessage(from, "🔍 *Analyzing your bill...*")
 	path, _ := services.DownloadWhatsAppMedia(image["id"].(string))
 	text, _ := services.ExtractTextFromImage(path)
 	amt := services.DetectAmount(text)
 	if amt > 0 {
-		warn, over := services.AddExpense(amt, "Bill Photo")
-		res := fmt.Sprintf("✅ *Photo Scanned:* ₹%.2f", amt)
+		warn, over := services.AddExpense(amt, "Bill Image")
+		res := fmt.Sprintf("📸 *Scan Complete!*\nAdded *₹%.2f* for *Bill Photo*.", amt)
 		if over {
 			res += "\n\n" + warn
 		}
 		sendMessage(from, res)
 	} else {
-		sendMessage(from, "❌ Could not find amount in photo.")
+		sendMessage(from, "❌ *OCR Failed:* I couldn't find a clear amount. Please type: `Item Amount`.")
 	}
 	sendFollowUp(from)
 }
 
 func processAudio(from string, audio map[string]interface{}) {
-	sendMessage(from, "🎧 *Processing voice...*")
+	sendMessage(from, "🎧 *Processing your voice note...*")
 	path, _ := services.DownloadWhatsAppMedia(audio["id"].(string))
 	text, _ := services.SpeechToText(path)
 	note, amt, ok := services.ParseExpense(text)
 	if ok {
 		warn, over := services.AddExpense(amt, note)
-		res := fmt.Sprintf("🎤 *Voice Added:* %s - ₹%.2f", note, amt)
+		res := fmt.Sprintf("🎤 *Voice Logged!*\n*Item:* %s\n*Amount:* ₹%.2f", note, amt)
 		if over {
 			res += "\n\n" + warn
 		}
 		sendMessage(from, res)
 	} else {
-		sendMessage(from, "❌ Could not understand voice amount.")
+		sendMessage(from, "❌ *Audio Error:* I heard \""+text+"\" but didn't find an amount.")
 	}
 	sendFollowUp(from)
 }
 
-// HELPERS
+// --- HELPER METHODS ---
+
 func sendFollowUp(to string) {
-	time.Sleep(800 * time.Millisecond)
-	sendButtons(to, "🤝 Need anything else?", []string{"YES_HELP", "no_help"}, []string{"Show Menu", "I'm Done"})
+	time.Sleep(1 * time.Second)
+	sendButtons(to, "🤝 Need anything else, Sir?", []string{"yes_help", "no_help"}, []string{"Main Menu", "I'm Done"})
 }
 
 func sendButtons(to, bodyText string, ids []string, titles []string) {
